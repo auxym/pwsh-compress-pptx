@@ -66,7 +66,7 @@ function transcode-video {
             '-c:v', 'libsvtav1',
             '-crf', 35,
             '-preset', 9
-            #,'-t', '00:00:05'
+            #,'-t', '00:00:01'
         )
 
         $scale_opts = @(
@@ -95,7 +95,8 @@ function transcode-video {
             Remove-Item $input_item
             Move-Item $tmpname $output
             Get-Item $output
-        } else {
+        }
+        else {
             Remove-Item $tmpname
             Write-Error "ffmpeg returned exit code $LASTEXITCODE"
             $input_item
@@ -119,10 +120,13 @@ function Update-Rels {
         $NewName
     )
 
-    $src_exp = "Target=""(.*)/$OldName"""
+    $src_exp = "Target=""([^""]*)/$($OldName -replace '\.', '\.')"""
     $rep_exp = 'Target="$1/' + $NewName + '"' 
 
-    Join-Path $RootPath "ppt/slides/_rels" | Get-ChildItem -File -Filter '*.xml.rels' | ForEach-Object {
+    Join-Path $RootPath "ppt/slides/_rels" | Get-ChildItem -File -Filter '*.xml.rels'
+    | Where-Object { Select-String $_ -Pattern $src_exp }
+    | ForEach-Object {
+        Write-Verbose "Modify rels in $_"
         $content = Get-Content $_
         ($content -replace $src_exp, $rep_exp) | Out-File $_ -Encoding utf8NoBOM
     }
