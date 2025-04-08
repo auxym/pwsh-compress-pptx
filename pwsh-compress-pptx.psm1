@@ -1,3 +1,5 @@
+Set-StrictMode -Version 2.0
+$ErrorActionPreference = 'Stop'
 
 function Get-FfprobeData {
     [cmdletbinding()]
@@ -132,6 +134,43 @@ function Update-Rels {
     }
 }
 
+function Update-ContentTypes {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]
+        $RootPath
+    )
+    # Powershell needs to espace the brackets here
+    $cTypesXmlFile = Join-Path $RootPath '`[Content_Types`].xml' | Get-Item
+
+    [xml]$doc = Get-Content -LiteralPath $cTypesXmlFile.FullName
+
+    # Create the namespace manager
+    $nsMgr = New-Object System.Xml.XmlNamespaceManager($doc.NameTable)
+    $nsMgr.AddNamespace("t", "http://schemas.openxmlformats.org/package/2006/content-types")
+
+    # Check if we already have a <Default> element for the .mp4 extension,
+    # if not, we add it.
+    if (-not $doc.SelectSingleNode("//t:Default[@Extension='mp4']", $nsMgr)) {
+        # Find the <Types> root element
+        $root = $doc.DocumentElement
+
+        # Create a new <Default> node
+        $newDefault = $doc.CreateElement("Default", $root.NamespaceURI)
+        $newDefault.SetAttribute("Extension", "mp4")
+        $newDefault.SetAttribute("ContentType", "video/mp4")
+
+        # Insert the new node after the last <Default> element
+        $lastDefault = $root.SelectNodes("t:Default", $nsMgr) | Select-Object -Last 1
+        $root.InsertAfter($newDefault, $lastDefault) | Out-Null
+
+        # Save the modified XML back to file
+        # We need an absolute path here
+        $doc.Save($cTypesXmlFile.FullName)
+    }
+}
+
 function Compress-PptxMedia {
     [CmdletBinding()]
     param (
@@ -161,7 +200,7 @@ function Compress-PptxMedia {
     
     $media_dir = Join-Path $tempdir "ppt/media"
 
-    Get-VideoFiles $media_dir
+    $transcodedVideoFiles = Get-VideoFiles $media_dir
     | Where-Object { $_.Length -ge $SizeThreshold }
     | Where-Object { [int]((Get-FfprobeData $_).format.bit_rate) -gt $bitrate_threshold }
     | ForEach-Object {
@@ -169,8 +208,15 @@ function Compress-PptxMedia {
         if ($newfile.Name -ne $_.Name) {
             Update-Rels -RootPath $tempdir -OldName $_.Name -NewName $newfile.Name
         }
+        $newfile
     }
-    | Out-Null
+
+    # If we created new .mp4 files in the pptx, and there were none before,
+    # we need to update the [ContentTypes].xml file to add a default content
+    # type for the .mp4 extension.
+    if (($transcodedVideoFiles | Measure-Object).Count -gt 0) {
+        Update-ContentTypes -RootPath $tempdir
+    }
 
     Compress-Archive -Path (Join-Path $tempdir "*") -DestinationPath $DestinationPath -CompressionLevel "Optimal" -Force:$Overwrite
 
