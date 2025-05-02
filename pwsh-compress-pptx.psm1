@@ -10,7 +10,8 @@ function Get-FfprobeData {
     )
 
     process {
-        & ffprobe -v quiet -print_format json -show_format -show_streams $Path | ConvertFrom-Json
+        $ffprobe_output = & ffprobe -v quiet -print_format json -show_format -show_streams $Path
+        $ffprobe_output | ConvertFrom-Json
     }
 }
 
@@ -83,7 +84,8 @@ function transcode-video {
         $ffmpeg_opts = $ffmpeg_base_opts
 
         # Min of horizontal and vertical resolution
-        $res = $info.streams | ForEach-Object { (@($_.width, $_.height) | Measure-Object -Minimum).Minimum }
+        # Try / catch used to ignore streams that don't have width/height properties (eg audio streams)
+        $res = ($info.streams | ForEach-Object { try {@($_.width, $_.height)} catch {}} | Measure-Object -Minimum).Minimum
         if ($res -gt 1080) {
             # Rescale only if source is larger than 1080 resolution
             $ffmpeg_opts += $scale_opts
