@@ -65,7 +65,8 @@ function transcode-video {
     begin {
         $ffmpeg_base_opts = @(
             '-threads', 2,
-            '-c:a', 'copy' 
+            '-c:a', 'aac',
+            '-b:a', '320k', 
             '-c:v', 'libsvtav1',
             '-crf', 35,
             '-preset', 9
