@@ -1,7 +1,7 @@
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-function Get-FfprobeData {
+function Get-FfprobeInfo {
     [cmdletbinding()]
     param (
         [parameter(mandatory = $true, valuefrompipeline = $true)]
@@ -24,7 +24,7 @@ function isVideo {
     )
 
     process {
-        $info = Get-FfprobeData $Path
+        $info = Get-FfprobeInfo $Path
         ($info.streams | Where-Object { [int]$_.nb_frames } | Measure-Object).Count -gt 0
     }
 
@@ -81,7 +81,7 @@ function transcode-video {
     }
 
     process {
-        $info = Get-FfprobeData $Path
+        $info = Get-FfprobeInfo $Path
         $ffmpeg_opts = $ffmpeg_base_opts
 
         # Min of horizontal and vertical resolution
@@ -199,31 +199,38 @@ function Compress-PptxMedia {
     #$tempdir = Get-Item (Join-Path $env:TEMP 'fc50475a-80df-47de-9e92-b57dbb8f45a9')
     #Get-ChildItem $tempdir | Remove-Item -Recurse -Force
     $tempdir = New-Item -Type Directory -Path (Join-Path $env:TEMP $(New-Guid))
-    Expand-Archive -Path $Path -Destination $tempdir -Force
-    
-    $media_dir = Join-Path $tempdir "ppt/media"
 
-    $transcodedVideoFiles = Get-VideoFiles $media_dir
-    | Where-Object { $_.Length -ge $SizeThreshold }
-    | Where-Object { [int]((Get-FfprobeData $_).format.bit_rate) -gt $bitrate_threshold }
-    | ForEach-Object {
-        $newfile = transcode-video -Path $_
-        if ($newfile.Name -ne $_.Name) {
-            Update-Rels -RootPath $tempdir -OldName $_.Name -NewName $newfile.Name
+    # Use a try block here to make sure we always clean up the temp dir at the end
+    try {
+        Expand-Archive -Path $Path -Destination $tempdir -Force
+        
+        $media_dir = Join-Path $tempdir "ppt/media"
+
+        $transcodedVideoFiles = Get-VideoFiles $media_dir
+        | Where-Object { $_.Length -ge $SizeThreshold }
+        | Where-Object { [int]((Get-FfprobeInfo $_).format.bit_rate) -gt $bitrate_threshold }
+        | ForEach-Object {
+            $newfile = transcode-video -Path $_
+            if ($newfile.Name -ne $_.Name) {
+                Update-Rels -RootPath $tempdir -OldName $_.Name -NewName $newfile.Name
+            }
+            $newfile
         }
-        $newfile
+
+        # If we created new .mp4 files in the pptx, and there were none before,
+        # we need to update the [ContentTypes].xml file to add a default content
+        # type for the .mp4 extension.
+        if (($transcodedVideoFiles | Measure-Object).Count -gt 0) {
+            Update-ContentTypes -RootPath $tempdir
+        }
+
+        Compress-Archive -Path (Join-Path $tempdir "*") -DestinationPath $DestinationPath -CompressionLevel "Optimal" -Force:$Overwrite
+    }
+    finally {
+        Remove-Item -Recurse -Force $tempdir
     }
 
-    # If we created new .mp4 files in the pptx, and there were none before,
-    # we need to update the [ContentTypes].xml file to add a default content
-    # type for the .mp4 extension.
-    if (($transcodedVideoFiles | Measure-Object).Count -gt 0) {
-        Update-ContentTypes -RootPath $tempdir
-    }
-
-    Compress-Archive -Path (Join-Path $tempdir "*") -DestinationPath $DestinationPath -CompressionLevel "Optimal" -Force:$Overwrite
-
-    Remove-Item -Recurse -Force $tempdir
 }
 
 Export-ModuleMember -Function Compress-PptxMedia
+Export-ModuleMember -Function Get-FfprobeInfo
